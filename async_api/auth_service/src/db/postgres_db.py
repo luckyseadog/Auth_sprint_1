@@ -6,8 +6,6 @@ from sqlalchemy.orm import sessionmaker
 from core.config import settings
 from models.entity import Base
 
-# Base = declarative_base()
-
 dsn = (
     f'postgresql+asyncpg://{settings.pg_user}'
     f':{settings.pg_password}@{settings.pg_host}'
