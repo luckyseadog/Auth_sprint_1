@@ -15,8 +15,8 @@ from schemas.entity import History, User
 from schemas.entity_schemas import (AccessTokenData, RefreshTokenData,
                                     RoleEnum, TokenPair, UserCreate,
                                     UserCredentials)
-from services.auth_service import auth_service
 from services.history_service import history_service
+from services.password_service import password_service
 from services.role_service import role_service
 from services.token_service import access_token_service, refresh_token_service
 from services.user_service import user_service
@@ -109,40 +109,46 @@ async def login(
             detail='Origin header is required',
         )
     user_creds = UserCredentials(login=form_data.username, password=form_data.password)
-    res = await auth_service.login(user_creds, db)
-    if res is True:
-        user = await user_service.get_user_by_login(user_creds.login, db)
-        if await user_service.check_deleted(user.id, db):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail='User was deleted',
-            )
-
-        user_roles = [role.title for role in user.roles]
-        access_token, access_exp = access_token_service.generate_token(origin, user.id, user_roles)
-        refresh_token, refresh_exp = refresh_token_service.generate_token(origin, user.id)
-        response.set_cookie(key=settings.access_token_name, value=access_token, httponly=True, expires=access_exp)
-        response.set_cookie(key=settings.refresh_token_name, value=refresh_token, httponly=True, expires=refresh_exp)
-
-        note = History(
-            user_id=user.id,
-            action='/login',
-            fingerprint=user_agent,
-        )
-        await history_service.make_note(note, db)
-
-        await redis.add_valid_rtoken(user.id, refresh_token)
-
-        return TokenPair(
-            access_token=access_token,
-            refresh_token=refresh_token,
-        )
-
-    else:
+    user = await user_service.get_user_by_login(user_creds.login, db)
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail='Incorrect username or password',
         )
+
+    password = user_creds.password
+    target_password = user.password
+    if not password_service.check_password(password, target_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Incorrect username or password',
+        )
+
+    if await user_service.check_deleted(user.id, db):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='User was deleted',
+        )
+
+    user_roles = [role.title for role in user.roles]
+    access_token, access_exp = access_token_service.generate_token(origin, user.id, user_roles)
+    refresh_token, refresh_exp = refresh_token_service.generate_token(origin, user.id)
+    response.set_cookie(key=settings.access_token_name, value=access_token, httponly=True, expires=access_exp)
+    response.set_cookie(key=settings.refresh_token_name, value=refresh_token, httponly=True, expires=refresh_exp)
+
+    note = History(
+        user_id=user.id,
+        action='/login',
+        fingerprint=user_agent,
+    )
+    await history_service.make_note(note, db)
+
+    await redis.add_valid_rtoken(user.id, refresh_token)
+
+    return TokenPair(
+        access_token=access_token,
+        refresh_token=refresh_token,
+    )
 
 
 @router.post(
