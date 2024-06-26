@@ -5,7 +5,7 @@ import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 
 from core.config import settings
-
+from functools import lru_cache
 
 class TokenService:
     def __init__(self) -> None:
@@ -77,5 +77,11 @@ class RefreshTokenService(TokenService):
         return token, exp
 
 
-access_token_service = AccessTokenService()
-refresh_token_service = RefreshTokenService()
+@lru_cache
+def get_access_token_service() -> AccessTokenService:
+    return AccessTokenService()
+
+
+@lru_cache
+def get_refresh_token_service() -> RefreshTokenService:
+    return RefreshTokenService()

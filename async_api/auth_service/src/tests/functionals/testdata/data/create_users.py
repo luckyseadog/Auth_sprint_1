@@ -25,6 +25,7 @@ roles = [
         'description': 'subscriber role',
     },
 ]
+
 def create_roles():
     with open('roles.json', 'w') as file:
         file.write(json.dumps(roles, indent=4))

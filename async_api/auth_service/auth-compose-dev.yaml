@@ -1,9 +1,9 @@
 version: '3'
 services:
-  redis-auth:
+  redis-auth-dev:
     image: redis/redis-stack-server:latest
     volumes:
-     - redis-auth-data:/data
+     - redis-auth-data-dev:/data
     ports:
       - "6379:6379"
     healthcheck:
@@ -12,47 +12,27 @@ services:
       timeout: 3s
       retries: 5
 
-  postgres-auth:
+  postgres-auth-dev:
     image: postgres:16
     volumes:
-     - postgres-auth-data:/var/lib/postgresql/data
+     - postgres-auth-data-dev:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     env_file:
-      - src/.env
+      - ./src/.env
     environment:
       POSTGRES_PASSWORD: "${AUTH_DB_PASSWORD}"
       POSTGRES_USER: "${AUTH_DB_USER}"
       POSTGRES_DB: "${AUTH_DB_NAME}"
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${AUTH_DB_USER} -d ${AUTH_DB_NAME}"]
       interval: 5s
       timeout: 10s
 
-  fastapi-auth:
-    build: ./src
-    env_file:
-      - src/.env
-    ports:
-      - "8000:8000"
-    depends_on:
-      postgres-auth:
-        condition: service_healthy
-      redis-auth:
-        condition: service_healthy
-
-  nginx-auth:
-    image: nginx:1.25.3
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/configs:/etc/nginx/conf.d:ro
-    depends_on:
-      - fastapi-auth
-    ports:
-      - "80:80"
 
 volumes:
-  redis-auth-data:
+  redis-auth-data-dev:
     driver: local
-  postgres-auth-data:
+  postgres-auth-data-dev:
     driver: local

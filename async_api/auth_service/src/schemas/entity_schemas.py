@@ -37,6 +37,11 @@ class TokenPair(BaseModel):
     refresh_token: str
 
 
+class TokenPairExpired(TokenPair):
+    access_exp: int
+    refresh_exp: int
+
+
 class AccessTokenData(BaseModel):
     iss: str
     sub: str

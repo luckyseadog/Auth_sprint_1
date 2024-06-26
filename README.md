@@ -62,3 +62,9 @@
 
 ## Generate a secure random secret key
 - openssl rand -hex 32
+
+## Запуск сервиса авторизации:
+- накатить миграции alembic
+- создать пользователя superadmin commands.py
+- создать дефолтные роли commands.py
+- запустить main.py
