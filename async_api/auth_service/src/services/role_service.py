@@ -1,15 +1,12 @@
 import logging
+from functools import lru_cache
 
+from db.postgres_db import AsyncSession, get_session
+from fastapi import Depends, HTTPException, status
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import delete, select, update
-
-from db.postgres_db import AsyncSession
 from models.entity import RoleModel
 from schemas.entity import Role
-from functools import lru_cache
-from fastapi import Depends
-from db.postgres_db import get_session
-from fastapi import HTTPException, status
+from sqlalchemy import delete, select, update
 
 
 class RoleService:

@@ -3,9 +3,10 @@ import hmac
 import json
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from functools import lru_cache
 
 from core.config import settings
-from functools import lru_cache
+
 
 class TokenService:
     def __init__(self) -> None:

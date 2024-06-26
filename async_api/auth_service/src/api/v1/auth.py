@@ -1,23 +1,18 @@
 from typing import Annotated, Union
-
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, status
-from fastapi.responses import ORJSONResponse
-from fastapi.security.oauth2 import (
-    OAuth2PasswordRequestForm,
-)
+from uuid import uuid4
 
 from core.config import settings
-from schemas.entity_schemas import (
-    AccessTokenData, RefreshTokenData,
-    TokenPair, UserCreate, UserCredentials,
-)
-from schemas.entity import User
-
-from services.user_service import UserService, get_user_service
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, status
+from fastapi.responses import ORJSONResponse
+from fastapi.security.oauth2 import OAuth2PasswordRequestForm
+from schemas.entity import History, User
+from schemas.entity_schemas import (AccessTokenData, RefreshTokenData,
+                                    TokenPair, UserCreate, UserCredentials)
 from services.auth_service import AuthService, get_auth_service
+from services.history_service import HistoryService, get_history_service
 from services.role_service import RoleService, get_role_service
+from services.user_service import UserService, get_user_service
 from services.validation import validate_access_token, validate_refresh_token
-from uuid import uuid4
 
 router = APIRouter()
 
@@ -73,6 +68,8 @@ async def signup(
 async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    history_service: Annotated[HistoryService, Depends(get_history_service)],
     response: ORJSONResponse,
     origin: Annotated[str | None, Header()] = None,
     user_agent: Annotated[str | None, Header()] = None,
@@ -83,6 +80,16 @@ async def login(
             detail='Origin header is required',
         )
     user_creds = UserCredentials(login=form_data.username, password=form_data.password)
+
+    user = await user_service.get_user_by_login(user_creds.login)
+    user_id = user.id
+    note = History(
+            user_id=(str(user_id)),
+            action='/assign_role',
+            fingerprint=user_agent,
+        )
+    await history_service.make_note(note)
+
     tokens = await auth_service.login(user_creds, origin=origin, user_agent=user_agent)
 
     response.set_cookie(
@@ -119,13 +126,22 @@ async def logout(
     response: ORJSONResponse,
     payload: Annotated[AccessTokenData, Depends(validate_access_token)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    history_service: Annotated[HistoryService, Depends(get_history_service)],
     access_token: Annotated[Union[str, None], Cookie()] = None,
+    refresh_token: Annotated[Union[str, None], Cookie()] = None,
     user_agent: Annotated[str | None, Header()] = None,
 ):
     user_id = payload.sub
+    note = History(
+            user_id=(str(user_id)),
+            action='/logout',
+            fingerprint=user_agent,
+        )
+    await history_service.make_note(note)
+
     response.delete_cookie(key=settings.access_token_name)
     response.delete_cookie(key=settings.refresh_token_name)
-    return await auth_service.logout(user_id, access_token, user_agent)
+    return await auth_service.logout(user_id, access_token, refresh_token, user_agent)
 
 #
 #
@@ -139,11 +155,18 @@ async def logout(
 async def logout_all(
     response: ORJSONResponse,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    history_service: Annotated[HistoryService, Depends(get_history_service)],
     payload: Annotated[AccessTokenData, Depends(validate_access_token)],
     user_agent: Annotated[str | None, Header()] = None,
 
 ):
     user_id = payload.sub
+    note = History(
+            user_id=(str(user_id)),
+            action='/logout_all',
+            fingerprint=user_agent,
+        )
+    await history_service.make_note(note)
     await auth_service.logout_all(user_id, user_agent)
 
     response.delete_cookie(key=settings.access_token_name)
@@ -163,6 +186,7 @@ async def refresh(
     response: ORJSONResponse,
     payload: Annotated[RefreshTokenData, Depends(validate_refresh_token)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    history_service: Annotated[HistoryService, Depends(get_history_service)],
     origin: Annotated[str | None, Header()] = None,
     user_agent: Annotated[str | None, Header()] = None,
 ):
@@ -173,6 +197,12 @@ async def refresh(
         )
 
     user_id = payload.sub
+    note = History(
+            user_id=(str(user_id)),
+            action='/refresh',
+            fingerprint=user_agent,
+        )
+    await history_service.make_note(note)
     tokens = await auth_service.refresh(user_id, origin, user_agent)
 
     response.set_cookie(

@@ -1,9 +1,8 @@
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel
-
 from core.config import settings
+from pydantic import BaseModel
 
 
 class RolePatch(BaseModel):
