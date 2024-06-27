@@ -1,16 +1,15 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
-from db.postgres_db import AsyncSession, get_session
-from schemas.entity import History, User
-from schemas.entity_schemas import AccessTokenData, UpdateUserRole
-from services.history_service import history_service
-from services.user_service import user_service
-from services.validation import \
-    check_admin_or_super_admin_role_from_access_token
+from schemas.entity import User
+from schemas.entity_schemas import UpdateUserRole
+from services.validation import check_admin_or_super_admin_role_from_access_token
+from services.admin_service import AdminService, get_admin_service
 
-router = APIRouter()
+router = APIRouter(
+    dependencies=[Depends(check_admin_or_super_admin_role_from_access_token)],
+)
 
 
 @router.post(
@@ -28,26 +27,9 @@ router = APIRouter()
 )
 async def assign_role(
     user_role: UpdateUserRole,
-    payload: Annotated[AccessTokenData, Depends(check_admin_or_super_admin_role_from_access_token)],
-    user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
+    admin_service: Annotated[AdminService, Depends(get_admin_service)],
 ) -> User:
-    # TODO: check that role_id is valid
-
-    if await user_service.check_deleted(payload.sub, db):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='User was deleted',
-        )
-
-    note = History(
-        user_id=payload.sub,
-        action=f'/user_role/assign?role_id={user_role.role_id}',
-        fingerprint=user_agent,
-    )
-
-    await history_service.make_note(note, db)
-    updated_user = await user_service.assign_user_role(str(user_role.user_id), str(user_role.role_id), db)
+    updated_user = await admin_service.assign_user_role(str(user_role.user_id), str(user_role.role_id))
     return updated_user
 
 
@@ -60,27 +42,9 @@ async def assign_role(
 )
 async def revoke_role(
     user_role: UpdateUserRole,
-    payload: Annotated[AccessTokenData, Depends(check_admin_or_super_admin_role_from_access_token)],
-    user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
+    admin_service: Annotated[AdminService, Depends(get_admin_service)],
 ) -> User:
-    # TODO: check that role_id is valid
-
-    if await user_service.check_deleted(payload.sub, db):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='User was deleted',
-        )
-
-    note = History(
-        user_id=payload.sub,
-        action=f'/user_role/revoke?role_id={user_role.role_id}',
-        fingerprint=user_agent,
-    )
-
-    await history_service.make_note(note, db)
-    updated_user = await user_service.revoke_user_role(str(user_role.user_id), str(user_role.role_id), db)
-    return updated_user
+    return await admin_service.revoke_user_role(str(user_role.user_id), str(user_role.role_id))
 
 
 @router.post(
@@ -91,47 +55,8 @@ async def revoke_role(
 )
 async def check_role(
     user_role: UpdateUserRole,
-    payload: Annotated[AccessTokenData, Depends(check_admin_or_super_admin_role_from_access_token)],
-    user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
+    admin_service: Annotated[AdminService, Depends(get_admin_service)],
+    # user_agent: Annotated[str | None, Header()] = None,
 ):
-    # TODO: check that role_id is valid
-
-    if await user_service.check_deleted(payload.sub, db):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='User was deleted',
-        )
-
-    note = History(
-        user_id=payload.sub,
-        action=f'/user_role/check?role_id={user_role.role_id}',
-        fingerprint=user_agent,
-    )
-
-    await history_service.make_note(note, db)
-    res = await user_service.check_user_role(str(user_role.role_id), str(user_role.role_id), db)
+    res = await admin_service.check_user_role(str(user_role.user_id), str(user_role.role_id))
     return {'result': 'YES' if res else 'NO'}
-
-
-@router.get('/user_role')
-async def get_users(
-    user_agent: Annotated[str | None, Header()] = None,
-    payload: AccessTokenData = Depends(check_admin_or_super_admin_role_from_access_token),
-    db: AsyncSession = Depends(get_session),
-) -> list[User]:
-    if await user_service.check_deleted(payload.sub, db):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='User was deleted',
-        )
-
-    note = History(
-        user_id=payload.sub,
-        action='/user_role',
-        fingerprint=user_agent,
-    )
-    await history_service.make_note(note, db)
-
-    users = await user_service.get_users(db)
-    return users

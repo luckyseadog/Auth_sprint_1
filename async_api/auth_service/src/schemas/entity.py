@@ -11,8 +11,8 @@ class Role(BaseModel):
     title: str
     description: str | None = None
 
-    class Config:
-        orm_mode = True
+    class ConfigDict:
+        from_attributes = True
 
 
 class User(BaseModel):
@@ -26,8 +26,8 @@ class User(BaseModel):
     roles: list[Role] | None = None
     deleted_at: datetime.datetime | None = Field(default=None)
 
-    class Config:
-        orm_mode = True
+    class ConfigDict:
+        from_attributes = True
 
 
 class History(BaseModel):
