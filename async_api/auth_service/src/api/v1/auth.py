@@ -179,7 +179,7 @@ async def refresh(
 #
 @router.post(
     '/signup_guest',
-    # response_model=,
+    response_model=TokenPair,
     status_code=status.HTTP_200_OK,
     summary='Регистрация гостевого пользователя',
     description='''

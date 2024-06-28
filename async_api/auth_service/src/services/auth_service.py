@@ -9,15 +9,16 @@ from db.redis_db import Redis, get_redis
 from db.postgres_db import get_session
 from services.user_service import UserService, get_user_service
 from schemas.entity_schemas import TokenPairExpired
-from fastapi import HTTPException
-from fastapi import status
 from schemas.entity import History
 from services.token_service import (
     AccessTokenService,
     RefreshTokenService,
+    get_access_token_service,
+    get_refresh_token_service,
 )
 from services.history_service import HistoryService, get_history_service
 from datetime import datetime
+from services.exceptions import invalid_user_name_or_password
 
 
 class AuthService:
@@ -27,34 +28,30 @@ class AuthService:
             redis: Redis,
             user_service: UserService,
             history_service: HistoryService,
+            access_token_service: AccessTokenService,
+            refresh_token_service: RefreshTokenService,
     ):
         self.db = db
         self.cache = redis
         self.user_service = user_service
         self.history_service = history_service
+        self.access_token = access_token_service
+        self.refresh_token = refresh_token_service
 
     async def login(self, user_creds: UserCredentials, origin, user_agent) -> TokenPairExpired:
         user = await self.user_service.get_user_by_login(user_creds.login)
         if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail='Invalid username or password',
-            )
+            raise invalid_user_name_or_password()
 
         password = user_creds.password
         target_password = user.password
 
         if not password_service.check_password(password, target_password):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f'Invalid username or password {password} {target_password}',
-            )
+            raise invalid_user_name_or_password()
 
-        at = AccessTokenService()
-        rt = RefreshTokenService()
         roles = [role.title for role in user.roles]
-        access_token, access_exp = at.generate_token(origin, user.id, roles)
-        refresh_token, refresh_exp = rt.generate_token(origin, user.id)
+        access_token, access_exp = self.access_token.generate_token(origin, user.id, roles)
+        refresh_token, refresh_exp = self.refresh_token.generate_token(origin, user.id)
 
         note = History(
             user_id=user.id,
@@ -107,11 +104,10 @@ class AuthService:
 
     async def refresh(self, user_id, origin, user_agent):
         user = await self.user_service.get_user(user_id)
-        at = AccessTokenService()
-        rt = RefreshTokenService()
+
         roles = [role.title for role in user.roles]
-        access_token, access_exp = at.generate_token(origin, user.id, roles)
-        refresh_token, refresh_exp = rt.generate_token(origin, user.id)
+        access_token, access_exp = self.access_token.generate_token(origin, user.id, roles)
+        refresh_token, refresh_exp = self.refresh_token.generate_token(origin, user.id)
         await self.cache.setex(
             f'{user.id}:login:{user_agent}',
             settings.refresh_token_weeks * 60 * 60 * 24 * 7,
@@ -131,10 +127,14 @@ def get_auth_service(
         cache: Redis = Depends(get_redis),
         user_service: UserService = Depends(get_user_service),
         history_service: HistoryService = Depends(get_history_service),
+        access_token_service: AccessTokenService = Depends(get_access_token_service),
+        refresh_token_service: RefreshTokenService = Depends(get_refresh_token_service),
 ) -> AuthService:
     return AuthService(
         db=db,
         redis=cache,
         user_service=user_service,
         history_service=history_service,
+        access_token_service=access_token_service,
+        refresh_token_service=refresh_token_service,
     )

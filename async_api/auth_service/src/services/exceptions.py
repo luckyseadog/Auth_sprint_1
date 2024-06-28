@@ -21,8 +21,16 @@ def role_already_exists(role_id: str) -> HTTPException:
         detail=f'role {role_id} already exists',
     )
 
+
 def role_not_exists(role_id: str) -> HTTPException:
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f'role {role_id} not exists in user',
+    )
+
+
+def invalid_user_name_or_password() -> HTTPException:
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail='Invalid username or password',
     )

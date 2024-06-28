@@ -31,10 +31,10 @@ class RoleService:
         returned_role = result.scalars().one_or_none()
         return returned_role
 
-    async def _get_role_by_name(self, role_name: str) -> Role:
+    async def get_role_by_name(self, role_name: str) -> Role:
         result = await self.db.execute(select(RoleModel).where(RoleModel.title == role_name))
         returned_role = result.scalars().one_or_none()
-        return returned_role
+        return Role(id=returned_role.id, title=returned_role.title, description=returned_role.description)
 
     async def update_role(self, role_patch: Role) -> Role:
         query = (
