@@ -61,6 +61,7 @@ async def update_role(
     status_code=status.HTTP_200_OK,
     summary='Удаление роли',
     description='',
+    response_model=Role,
 )
 async def delete_role(
     role_id: UUID,
