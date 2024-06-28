@@ -11,7 +11,7 @@ def role_not_found(role_id: str) -> HTTPException:
 def user_not_found(user_id: str) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
-        detail=f'Role with id {user_id} not found',
+        detail=f'User with id {user_id} not found',
     )
 
 

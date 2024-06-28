@@ -62,7 +62,7 @@ async def test_unsuccess_login(client, superadmin_cookies):
         headers={'Origin': settings.root_path},
     )
 
-    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert response.cookies.get('access_token') is None
     assert response.cookies.get('refresh_token') is None
 

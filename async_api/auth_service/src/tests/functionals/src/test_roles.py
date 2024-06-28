@@ -67,7 +67,7 @@ async def test_update_not_existing_role(client, superadmin_cookies):
         cookies=superadmin_cookies,
     )
     assert response.status_code == status.HTTP_404_NOT_FOUND
-    assert response.json() == {'detail': f'role with id {test_role_update_or_delete["id"]} does not exist'}
+    assert response.json() == {'detail': f'Role with id {test_role_update_or_delete["id"]} not found'}
 
 
 @pytest.mark.asyncio
@@ -88,5 +88,5 @@ async def test_delete_not_existing_role(client, superadmin_cookies):
         cookies=superadmin_cookies,
         params={'role_id': test_role_update_or_delete['id']},
     )
-    assert response.json() is None
-    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == {'detail': f'Role with id {test_role_update_or_delete["id"]} not found'}
+    assert response.status_code == status.HTTP_404_NOT_FOUND

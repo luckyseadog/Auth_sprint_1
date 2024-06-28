@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 from pydantic import Field
 
 
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     role_subscriber: str = Field('subscriber', alias='SUBSCRIBER_ROLE_NAME')
     role_guest: str = Field('guest', alias='GUEST_ROLE_NAME')
 
-    model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8')
+    # model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8')
 
 
 settings = Settings()

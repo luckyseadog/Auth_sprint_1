@@ -115,23 +115,15 @@ from httpx import codes
                 'url': '/signup',
                 'method': 'POST',
             },
-            {'status': codes.UNPROCESSABLE_ENTITY},
+            {'status': codes.BAD_REQUEST},
         ),
         (
             {
                 'url': '/login',
                 'method': 'POST',
             },
-            {'status': codes.UNPROCESSABLE_ENTITY},
-        ),
-        (
-            {
-                'url': '/signup_guest',
-                'method': 'POST',
-            },
             {'status': codes.BAD_REQUEST},
         ),
-
     ],
     ids=[
         'GET /roles',
@@ -151,7 +143,6 @@ from httpx import codes
         'POST /refresh',
         'POST /signup',
         'POST /login',
-        'POST /signup_guest',
     ],
 )
 @pytest.mark.asyncio

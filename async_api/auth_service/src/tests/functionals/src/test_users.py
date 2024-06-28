@@ -43,7 +43,10 @@ async def test_create_user(client, superadmin_cookies):
     )
 
     assert response.status_code == codes.OK
-    assert response.json()['message'] == 'User created successfully'
+    assert response.json()['login'] == my_test_user['login']
+    assert response.json()['email'] == my_test_user['email']
+    assert response.json()['first_name'] == my_test_user['first_name']
+    assert response.json()['last_name'] == my_test_user['last_name']
 
 
 @pytest.mark.asyncio
