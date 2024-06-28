@@ -1,68 +1,71 @@
-from db.postgres import AsyncSession, get_session
-from fastapi import Depends
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy import delete, select, update
+
+from db.postgres_db import AsyncSession
 from models.entity import RoleModel
 from schemas.entity import Role
-from schemas.updates import RolePatch
-from sqlalchemy import delete, select, update
-import logging
+from functools import lru_cache
+from fastapi import Depends
+from db.postgres_db import get_session
+from services.exceptions import role_not_found
 
 
-class RoleService():
-    async def create_role(self, role_create: Role, db: AsyncSession) -> Role:
+class RoleService:
+    def __init__(self, db: AsyncSession):
+        self.db = db
+
+    async def create_role(self, role_create: Role) -> Role:
         role_dto = jsonable_encoder(role_create, exclude_none=True)
         role = RoleModel(**role_dto)
-        db.add(role)
-        await db.commit()
-        await db.refresh(role)
+        self.db.add(role)
+        await self.db.commit()
+        await self.db.refresh(role)
         return role
 
-    async def get_roles(self, db: AsyncSession, skip: int = 0, limit: int = 10) -> list[Role]:
-        result = await db.execute(select(RoleModel))
-        return [
-            Role(
-                id=role.id,
-                title=role.title,
-                description=role.description,
-            ) for role in result.scalars()
-        ]
+    async def get_roles(self, skip: int = 0, limit: int = 10) -> list[Role]:
+        result = await self.db.execute(select(RoleModel).offset(skip).limit(limit))
+        return result.scalars().all()
 
-    async def get_role_by_id(self, role_id: str, db: AsyncSession) -> Role:
-        result = await db.execute(select(RoleModel).filter(RoleModel.id == role_id))
-        returned_role = result.scalars().one()
-        return Role(
-            id=returned_role.id,
-            title=returned_role.title,
-            description=returned_role.description,
-        )
+    async def _get_role_by_id(self, role_id: str) -> Role:
+        result = await self.db.execute(select(RoleModel).where(RoleModel.id == role_id))
+        returned_role = result.scalars().one_or_none()
+        return returned_role
 
-    async def update_role(self, role_id: str, role_patch: RolePatch, db: AsyncSession) -> Role:
-        logging.warn(role_patch.model_dump(exclude_none=True))
+    async def get_role_by_name(self, role_name: str) -> Role:
+        result = await self.db.execute(select(RoleModel).where(RoleModel.title == role_name))
+        returned_role = result.scalars().one_or_none()
+        return Role(id=returned_role.id, title=returned_role.title, description=returned_role.description)
+
+    async def update_role(self, role_patch: Role) -> Role:
         query = (
             update(RoleModel)
-            .where(RoleModel.id == str(role_id))
-            .values(**role_patch.model_dump(exclude_none=True))
+            .where(RoleModel.id == str(role_patch.id))
+            .values(title=role_patch.title, description=role_patch.description)
             .returning(RoleModel)
         )
-        result = await db.execute(query)
+        result = await self.db.execute(query)
         updated_role = result.scalars().one_or_none()
 
         if not updated_role:
-            return
+            raise role_not_found(role_patch.id)
 
-        await db.commit()
-        resp = Role(id=updated_role.id, title=updated_role.title, description=updated_role.description)
-        return resp
+        await self.db.commit()
+        await self.db.refresh(updated_role)
+        return role_patch
 
-    async def delete_role(self, role_id: str, db: AsyncSession):
-        result = await db.execute(delete(RoleModel).where(RoleModel.id == role_id).returning(RoleModel))
+    async def delete_role(self, role_id: str):
+        result = await self.db.execute(delete(RoleModel).where(RoleModel.id == role_id).returning(RoleModel))
         deleted_role = result.scalars().one_or_none()
+
         if deleted_role is None:
-            return
+            if not deleted_role:
+                raise role_not_found(role_id)
+        await self.db.commit()
+        return deleted_role
 
-        await db.commit()
-        resp = Role(id=deleted_role.id, title=deleted_role.title, description=deleted_role.description)
-        return resp
 
-
-role_service = RoleService()
+@lru_cache
+def get_role_service(
+        db: AsyncSession = Depends(get_session),
+) -> RoleService:
+    return RoleService(db=db)

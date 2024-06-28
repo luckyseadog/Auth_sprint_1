@@ -1,0 +1,36 @@
+version: '3'
+services:
+  redis-auth-test:
+    image: redis/redis-stack-server:latest
+    volumes:
+     - redis-auth-data-test:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+
+  postgres-auth-test:
+    image: postgres:16
+    volumes:
+     - postgres-auth-data-test:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: "${PG_PASSWORD}"
+      POSTGRES_USER: "${PG_USER}"
+      POSTGRES_DB: "${PG_NAME}"
+
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_NAME}" ]
+      interval: 5s
+      timeout: 10s
+
+
+volumes:
+  redis-auth-data-test:
+    driver: local
+  postgres-auth-data-test:
+    driver: local

@@ -1,10 +1,11 @@
-from core.config import settings
-from sqlalchemy.orm import declarative_base, sessionmaker
 from collections.abc import AsyncGenerator
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from models.entity import Base 
 
-# Base = declarative_base()
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+from core.config import settings
+
+Base = declarative_base()
 
 dsn = (
     f'postgresql+asyncpg://{settings.pg_user}'

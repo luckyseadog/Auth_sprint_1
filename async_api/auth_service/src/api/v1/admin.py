@@ -1,48 +1,15 @@
-from fastapi import status, HTTPException, Header
-from db.postgres import AsyncSession, get_session
-from fastapi import APIRouter, Depends
-from schemas.entity import Role, User, UserRoleUUID, History
-from services.role_service import role_service
-from services.user_service import user_service
-from services.history_service import history_service
-from schemas.updates import RolePatch
-from typing import Annotated, Union
-from fastapi import Cookie
-from services.token_service import access_token_service, refresh_token_service
-from db.redis_db import RedisTokenStorage, get_redis
-import json
-import time
-import datetime
-from uuid import UUID
+from typing import Annotated
 
-router = APIRouter()
+from fastapi import APIRouter, Depends, status
 
+from schemas.entity import User
+from schemas.entity_schemas import UpdateUserRole
+from services.validation import check_admin_or_super_admin_role_from_access_token
+from services.admin_service import AdminService, get_admin_service
 
-class AdminError(Exception):
-    def __init__(self, message):
-        self.message = message
-        super().__init__(self.message)
-
-async def validate_token(access_token, refresh_token, redis):
-    if access_token is None and refresh_token is None:
-        raise AdminError("You are not logged in")
-
-    if not access_token_service.validate_token(access_token):
-        raise AdminError("Invalid access token")
-    
-    payload_str = access_token_service.decode_b64(access_token.split(".")[1])
-    payload = json.loads(payload_str)
-
-    if await redis.check_banned_atoken(payload["sub"], access_token):
-        raise AdminError("Access token is banned")
-
-    if payload["exp"] < time.time():
-        raise AdminError("Access token is expired")
-    
-    if "admin" not in payload["roles"]:
-        raise AdminError("Access token is withdrawn")
-    
-    return payload
+router = APIRouter(
+    dependencies=[Depends(check_admin_or_super_admin_role_from_access_token)],
+)
 
 
 @router.post(
@@ -59,25 +26,10 @@ async def validate_token(access_token, refresh_token, redis):
     ''',
 )
 async def assign_role(
-    role_id: UUID,
-    access_token: Annotated[Union[str, None], Cookie()] = None,
-    refresh_token: Annotated[Union[str, None], Cookie()] = None,
-    user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
-    ) -> User:
-    # TODO: check that role_id is valid
-    try:
-        payload = await validate_token(access_token, refresh_token, redis)
-    except AdminError as e:
-        raise HTTPException(status_code=401, detail=e.message)
-
-    note = History(user_id=payload["sub"],
-                   action=f"/user_role/assign?role_id={role_id}",
-                   fingerprint=user_agent)
-
-    await history_service.make_note(note, db)
-    updated_user = await user_service.assign_user_role(payload["sub"], str(role_id), db)
+    user_role: UpdateUserRole,
+    admin_service: Annotated[AdminService, Depends(get_admin_service)],
+) -> User:
+    updated_user = await admin_service.assign_user_role(str(user_role.user_id), str(user_role.role_id))
     return updated_user
 
 
@@ -89,26 +41,10 @@ async def assign_role(
     description='',
 )
 async def revoke_role(
-    role_id: UUID,
-    access_token: Annotated[Union[str, None], Cookie()] = None,
-    refresh_token: Annotated[Union[str, None], Cookie()] = None,
-    user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
-    ) -> User:
-    # TODO: check that role_id is valid
-    try:
-        payload = await validate_token(access_token, refresh_token, redis)
-    except AdminError as e:
-        raise HTTPException(status_code=401, detail=e.message)
-
-    note = History(user_id=payload["sub"],
-                   action=f"/user_role/revoke?role_id={role_id}",
-                   fingerprint=user_agent)
-
-    await history_service.make_note(note, db)
-    updated_user = await user_service.revoke_user_role(payload["sub"], str(role_id), db)
-    return updated_user
+    user_role: UpdateUserRole,
+    admin_service: Annotated[AdminService, Depends(get_admin_service)],
+) -> User:
+    return await admin_service.revoke_user_role(str(user_role.user_id), str(user_role.role_id))
 
 
 @router.post(
@@ -118,131 +54,9 @@ async def revoke_role(
     description='',
 )
 async def check_role(
-    role_id: UUID,
-    access_token: Annotated[Union[str, None], Cookie()] = None,
-    refresh_token: Annotated[Union[str, None], Cookie()] = None,
-    user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
-    ):
-    # TODO: check that role_id is valid
-    try:
-        payload = await validate_token(access_token, refresh_token, redis)
-    except AdminError as e:
-        raise HTTPException(status_code=401, detail=e.message)
-
-    note = History(user_id=payload["sub"],
-                   action=f"/user_role/check?role_id={role_id}",
-                   fingerprint=user_agent)
-
-    await history_service.make_note(note, db)
-    res = await user_service.check_user_role(payload["sub"], str(role_id), db)
+    user_role: UpdateUserRole,
+    admin_service: Annotated[AdminService, Depends(get_admin_service)],
+    # user_agent: Annotated[str | None, Header()] = None,
+):
+    res = await admin_service.check_user_role(str(user_role.user_id), str(user_role.role_id))
     return {'result': 'YES' if res else 'NO'}
-
-
-@router.get(
-    '/roles',
-    response_model=list[Role],
-    status_code=status.HTTP_200_OK,
-    summary='Получение списка ролей',
-    description='',
-)
-async def get_roles(
-    access_token: Annotated[Union[str, None], Cookie()] = None,
-    refresh_token: Annotated[Union[str, None], Cookie()] = None,
-    user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
-    ) -> list[Role]:
-    try:
-        payload = await validate_token(access_token, refresh_token, redis)
-    except AdminError as e:
-        raise HTTPException(status_code=401, detail=e.message)
-
-    note = History(user_id=payload["sub"],
-                   action="/roles[GET]",
-                   fingerprint=user_agent)
-    await history_service.make_note(note, db)
-    return await role_service.get_roles(db=db)
-
-
-@router.post(
-    '/roles',
-    response_model=Role,
-    status_code=status.HTTP_200_OK,
-    summary='Добавление роли',
-    description='',
-)
-async def add_role(
-    role_create: Role,
-    access_token: Annotated[Union[str, None], Cookie()] = None,
-    refresh_token: Annotated[Union[str, None], Cookie()] = None, 
-    user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
-    ):
-    try:
-        payload = await validate_token(access_token, refresh_token, redis)
-    except AdminError as e:
-        raise HTTPException(status_code=401, detail=e.message)
-
-    note = History(user_id=payload["sub"],
-                   action="/roles[POST]",
-                   fingerprint=user_agent)
-    await history_service.make_note(note, db)
-    return await role_service.create_role(role_create=role_create, db=db)
-
-
-@router.put(
-    '/roles',
-    #     response_model=,
-    status_code=status.HTTP_200_OK,
-    summary='Обновление роли',
-    description='',
-)
-async def update_role(
-    role_id: UUID,
-    role_patch: RolePatch,
-    access_token: Annotated[Union[str, None], Cookie()] = None,
-    refresh_token: Annotated[Union[str, None], Cookie()] = None,
-    user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
-    ):
-    try:
-        payload = await validate_token(access_token, refresh_token, redis)
-    except AdminError as e:
-        raise HTTPException(status_code=401, detail=e.message)
-
-    note = History(user_id=payload["sub"],
-                   action="/roles[PUT]",
-                   fingerprint=user_agent)
-    await history_service.make_note(note, db)
-    return await role_service.update_role(role_id=str(role_id), role_patch=role_patch, db=db)
-
-
-@router.delete(
-    '/roles',
-    status_code=status.HTTP_200_OK,
-    summary='Удаление роли',
-    description='',
-)
-async def delete_role(
-    role_id: UUID, 
-    access_token: Annotated[Union[str, None], Cookie()] = None,
-    refresh_token: Annotated[Union[str, None], Cookie()] = None,
-    user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
-    ):
-    try:
-        payload = await validate_token(access_token, refresh_token, redis)
-    except AdminError as e:
-        raise HTTPException(status_code=401, detail=e.message)
-
-    note = History(user_id=payload["sub"],
-                   action="/roles[delete]",
-                   fingerprint=user_agent)
-    await history_service.make_note(note, db)
-    return await role_service.delete_role(role_id=str(role_id), db=db)
-

@@ -1,58 +1,29 @@
-from fastapi import APIRouter
-from fastapi import status, HTTPException
-from services.auth_service import auth_service
-from services.user_service import user_service
-from db.postgres import get_session
-from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
-from schemas.entity import UserCreate, UserCredentials, User, History
-from fastapi.responses import ORJSONResponse
-from typing import Annotated
-from fastapi import Header
-from services.token_service import access_token_service, refresh_token_service
-from db.redis_db import RedisTokenStorage, get_redis
 from typing import Annotated, Union
-from fastapi import Cookie
-import json
-import time
-from uuid import uuid4
-import datetime
-from services.history_service import history_service
-import logging
 
+from fastapi import APIRouter, Cookie, Depends, Header, status
+from fastapi.responses import ORJSONResponse
+from fastapi.security.oauth2 import (
+    OAuth2PasswordRequestForm,
+)
+
+from core.config import settings
+from schemas.entity_schemas import (
+    AccessTokenData, RefreshTokenData,
+    TokenPair, UserCreate, UserCredentials,
+)
+from schemas.entity import User
+
+from services.user_service import UserService, get_user_service
+from services.auth_service import AuthService, get_auth_service
+from services.role_service import RoleService, get_role_service
+from services.validation import validate_access_token, validate_refresh_token, check_origin
+from uuid import uuid4
 
 router = APIRouter()
 
-class AuthError(Exception):
-    def __init__(self, message):
-        self.message = message
-        super().__init__(self.message)
-
-async def validate_token(access_token, refresh_token, redis: RedisTokenStorage):
-    if access_token is None and refresh_token is None:
-        raise AuthError("You are not logged in")
-
-    if not access_token_service.validate_token(access_token):
-        raise AuthError("Invalid access token")
-    
-    payload_str = access_token_service.decode_b64(access_token.split(".")[1])
-    payload = json.loads(payload_str)
-    
-    if await redis.check_banned_atoken(payload["sub"], access_token):
-        raise AuthError("Invalid access token")
-
-    if payload["exp"] < time.time():
-        raise AuthError("Invalid access token")
-    
-    if payload["iat"] > await redis.get_user_last_logout_all(payload["sub"]):
-        raise AuthError("Invalid access token")
-    
-    return payload
-
-
 
 @router.post(
-    '/signup',
+    path='/signup',
     # response_model=,
     status_code=status.HTTP_200_OK,
     summary='Регистрация пользователя',
@@ -69,41 +40,22 @@ async def validate_token(access_token, refresh_token, redis: RedisTokenStorage):
     'Если пользователь с таким логином и почтой уже существует возвращается ошибка 409 с описанием,
     'что такой пользователь уже существует.\n''
     ''',
+    response_model=User,
+    dependencies=[Depends(check_origin)],
 )
 async def signup(
-    user_create: UserCreate, 
-    response: ORJSONResponse, 
-    origin: Annotated[str | None, Header()] = None, 
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
-    ):
-    if origin is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Origin header is required',
-        )
-    user = await user_service.get_user_by_email(user_create.email, db)
-    if user:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='email already exists')
-    user = await user_service.get_user_by_login(user_create.login, db)
-    if user:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='login already exists')
-
-    user = await user_service.create_user(user_create, db)
-    access_token, access_exp = access_token_service.generate_token(origin, user.id, ["user"]) # TODO: add default role?
-    refresh_token, refresh_exp = refresh_token_service.generate_token(origin, user.id)
-    response.set_cookie(key="access_token", value=access_token, httponly=True, expires=access_exp)
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, expires=refresh_exp)
-
-    await redis.add_valid_rtoken(user.id, refresh_token)
-
-    return {"message": "User created successfully"}
+    user_create: UserCreate,
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    # response: ORJSONResponse,
+):
+    return await user_service.create_user(user_create)
 
 
 @router.post(
     '/login',
     # response_model=,
     status_code=status.HTTP_200_OK,
+    response_model=TokenPair,
     summary='Аутентификация пользователя',
     description='''
     В теле запроса принимает два параметра: логин и пароль.
@@ -112,41 +64,37 @@ async def signup(
     ''',
 )
 async def login(
-    user_creds: UserCredentials,
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
     response: ORJSONResponse,
-    origin: Annotated[str | None, Header()] = None,
+    # origin: Annotated[str | None, Header()] = None,
+    origin: Annotated[str, Depends(check_origin)],
     user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
-):
-    if origin is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Origin header is required',
-        )
-    res = await auth_service.login(user_creds, db)
-    if res is True:
-        user = await user_service.get_user_by_login(user_creds.login, db)
-        user_roles = [role.title for role in user.roles]
-        access_token, access_exp = access_token_service.generate_token(origin, user.id, user_roles)
-        refresh_token, refresh_exp = refresh_token_service.generate_token(origin, user.id)
-        response.set_cookie(key="access_token", value=access_token, httponly=True, expires=access_exp)
-        response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, expires=refresh_exp)
+) -> TokenPair:
 
-        note = History(user_id=user.id,
-                   action="/login",
-                   fingerprint=user_agent)
-        await history_service.make_note(note, db)
+    user_creds = UserCredentials(login=form_data.username, password=form_data.password)
+    tokens = await auth_service.login(user_creds, origin=origin, user_agent=user_agent)
 
-        await redis.add_valid_rtoken(user.id, refresh_token)
+    response.set_cookie(
+        key=settings.access_token_name,
+        value=tokens.access_token,
+        httponly=True,
+        expires=tokens.access_exp,
+    )
 
-        return {"message": "Success login"}
+    response.set_cookie(
+        key=settings.refresh_token_name,
+        value=tokens.refresh_token,
+        httponly=True,
+        expires=tokens.refresh_exp,
+    )
 
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Login error'  # TODO: which error?
-        )
+    return TokenPair(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+
+    )
+
 
 @router.post(
     '/logout',
@@ -157,37 +105,20 @@ async def login(
                 'Токен помещается в кеш забаненнных access токенов. '
                 'Если пользователь решит снова аутентифицироваться, то ему придётся ввести логин и пароль.',
 )
-# async def logout(current_user: Annotated[User, Depends(get_current_user)]):
-#     return current_user
 async def logout(
     response: ORJSONResponse,
+    payload: Annotated[AccessTokenData, Depends(validate_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
     access_token: Annotated[Union[str, None], Cookie()] = None,
-    refresh_token: Annotated[Union[str, None], Cookie()] = None,
     user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
-    ):
-    try:
-        payload = await validate_token(access_token, refresh_token, redis)
-    except AuthError as e:
-        raise HTTPException(status_code=401, detail=e.message)
+):
+    user_id = payload.sub
+    response.delete_cookie(key=settings.access_token_name)
+    response.delete_cookie(key=settings.refresh_token_name)
+    return await auth_service.logout(user_id, access_token, user_agent)
 
-    user_id = payload.get("sub")
-
-    note = History(user_id=user_id,
-        action="/logout",
-        fingerprint=user_agent)
-    await history_service.make_note(note, db)
-
-    await redis.add_banned_atoken(user_id, access_token)
-    await redis.delete_refresh(user_id, refresh_token)
-
-    response.delete_cookie(key="access_token")
-    response.delete_cookie(key="refresh_token")
-
-    return {"message": "Success"}
-
-
+#
+#
 @router.post(
     '/logout_all',
     # response_model=,
@@ -195,92 +126,60 @@ async def logout(
     summary='Выход пользователя из всех устройств',
     description='',
 )
-
 async def logout_all(
     response: ORJSONResponse,
-    access_token: Annotated[Union[str, None], Cookie()] = None,
-    refresh_token: Annotated[Union[str, None], Cookie()] = None,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    payload: Annotated[AccessTokenData, Depends(validate_access_token)],
     user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
+
 ):
-    try:
-        payload = await validate_token(access_token, refresh_token, redis)
-    except AuthError as e:
-        raise HTTPException(status_code=401, detail=e.message)
-    
-
-    user_id = payload.get("sub")
-
-    note = History(user_id=user_id,
-        action="/logout_all",
-        fingerprint=user_agent)
-    await history_service.make_note(note, db)
-
-    await redis.set_user_last_logout_all(user_id)
-    await redis.delete_refresh_all(user_id)
-
-    response.delete_cookie(key="access_token")
-    response.delete_cookie(key="refresh_token")
-
-    return {"message": "logout_all"}
+    await auth_service.logout_all(payload.sub, user_agent)
+    response.delete_cookie(key=settings.access_token_name)
+    response.delete_cookie(key=settings.refresh_token_name)
+    return {'message': 'All accounts deactivated'}
 
 
 @router.post(
     '/refresh',
-    #     response_model=,
+    response_model=TokenPair,
     status_code=status.HTTP_200_OK,
     summary='Обновление access и refresh токенов',
     description='',
 )
 async def refresh(
     response: ORJSONResponse,
+    payload: Annotated[RefreshTokenData, Depends(validate_refresh_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
     origin: Annotated[str | None, Header()] = None,
-    refresh_token: Annotated[Union[str, None], Cookie()] = None,
     user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis)
 ):
-    if origin is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Origin header is required'
-        )
 
-    if refresh_token is None:
-        return {"message": "Invalid refresh token"}
-    
-    if not refresh_token_service.validate_token(refresh_token):
-        return {"message": "Invalid refresh token"}
-    
-    payload_str = refresh_token_service.decode_b64(refresh_token.split(".")[1])
-    payload = json.loads(payload_str)
+    user_id = payload.sub
+    tokens = await auth_service.refresh(user_id, origin, user_agent)
 
-    if await redis.check_valid_rtoken(payload["sub"], refresh_token) == False:
-        return {"message": "Invalid refresh token"}
+    response.set_cookie(
+        key=settings.access_token_name,
+        value=tokens.access_token,
+        httponly=True,
+        expires=tokens.access_exp,
+    )
 
-    if payload["exp"] < time.time():
-        return {"message": "Invalid refresh token"}
-    
-    user_id = payload.get("sub")
+    response.set_cookie(
+        key=settings.refresh_token_name,
+        value=tokens.refresh_token,
+        httponly=True,
+        expires=tokens.refresh_exp,
+    )
 
-    note = History(user_id=user_id,
-        action="/refresh",
-        fingerprint=user_agent)
-    await history_service.make_note(note, db)
-
-    access_token, access_exp = access_token_service.generate_token(origin, user_id, ["user"])
-    refresh_token, refresh_exp = refresh_token_service.generate_token(origin, user_id)
-    response.set_cookie(key="access_token", value=access_token, httponly=True, expires=access_exp)
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, expires=refresh_exp)
-
-    await redis.add_valid_rtoken(user_id, refresh_token)
-
-    return {"message": "Success"}
-
+    return TokenPair(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+    )
+#
+#
 @router.post(
     '/signup_guest',
-    # response_model=,
+    response_model=TokenPair,
     status_code=status.HTTP_200_OK,
     summary='Регистрация гостевого пользователя',
     description='''
@@ -291,37 +190,46 @@ async def refresh(
     ''',
 )
 async def signup_guest(
-    response: ORJSONResponse, 
-    origin: Annotated[str | None, Header()] = None,  
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    role_service: Annotated[RoleService, Depends(get_role_service)],
+    response: ORJSONResponse,
+    origin: Annotated[str | None, Header()] = None,
     user_agent: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_session),
-    redis: RedisTokenStorage = Depends(get_redis),
 ):
-    if origin is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail='Origin header is required'
-        )
-    
+
+    role = await role_service.get_role_by_name(settings.role_guest)
+    new_user_id = str(uuid4())
     guest_create = User(
-        login=f"login_{uuid4()}", 
-        email=f"email_{uuid4()}", 
-        password="", 
-        first_name=f"guest_{uuid4()}")
+        id=new_user_id,
+        login=f'guest_{new_user_id}',
+        email=f'email_{new_user_id}@auth.com',
+        password=new_user_id,
+        first_name=f'first_name_{new_user_id}',
+        last_name=f'last_name_{new_user_id}',
+        roles=[role],
+    )
 
-    user = await user_service.create_user(guest_create, db)
+    await user_service.create_user(guest_create)
+    user_creds = UserCredentials(login=guest_create.login, password=new_user_id)
+    tokens = await auth_service.login(user_creds, origin=origin, user_agent=user_agent)
 
-    note = History(user_id=user.id,
-        action="/signup_guest",
-        fingerprint=user_agent)
-    await history_service.make_note(note, db)
+    response.set_cookie(
+        key=settings.access_token_name,
+        value=tokens.access_token,
+        httponly=True,
+        expires=tokens.access_exp,
+    )
 
-    access_token, access_exp = access_token_service.generate_token(origin, user.id, ["guest"])
-    refresh_token, refresh_exp = refresh_token_service.generate_token(origin, user.id)
-    response.set_cookie(key="access_token", value=access_token, httponly=True, expires=access_exp)
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, expires=refresh_exp)
-    
+    response.set_cookie(
+        key=settings.refresh_token_name,
+        value=tokens.refresh_token,
+        httponly=True,
+        expires=tokens.refresh_exp,
+    )
 
-    await redis.add_valid_rtoken(user.id, refresh_token)
+    return TokenPair(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
 
-    return {"message": "Guest created successfully"}
+    )

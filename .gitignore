@@ -159,7 +159,7 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 etl/state.json
-.pre-commit-config.yaml
+# .pre-commit-config.yaml
 .flake8
 .env.dev
 fastapi-solution/docker-compose.dev.yml
@@ -168,3 +168,4 @@ static
 .DS_Store
 .vscode
 .python-version
+reset_auth_service.sh

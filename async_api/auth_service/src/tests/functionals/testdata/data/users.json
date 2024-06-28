@@ -1,28 +1,5 @@
 [
   {
-    "id": "bfd6f975-ff65-4cf0-b0a5-1efd16c4f744",
-    "login": "andrew95",
-    "email": "brownlisa@example.com",
-    "password": "WXVQs+pN^2",
-    "first_name": "Jennifer",
-    "last_name": "Carter",
-    "roles": [
-      {
-        "id": "28813998-4098-4c8d-b4f0-08c1169390c1",
-        "title": "user",
-        "description": "user role"
-      }
-    ],
-    "history": [
-      {
-        "id": "e9de433b-9366-4149-9a05-b7e31c59b4fe",
-        "occured_at": "2017-08-15 19:57:30",
-        "action": "login",
-        "fingerprint": "Mozilla/5.0 (X11; Linux i686) AppleWebKit/536.1 (KHTML, like Gecko) Chrome/44.0.846.0 Safari/536.1"
-      }
-    ]
-  },
-  {
     "id": "3a38995e-cbe2-405e-a928-c7bdf014ce38",
     "login": "gberry",
     "email": "kathleenlin@example.net",
